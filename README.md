@@ -9,7 +9,7 @@
 - Producer/consumer pipeline với rolling buffer ba group.
 - Prefetch xuyên chương và phát liên tục đến cuối sách.
 - Pause/Play, tua, âm lượng và Stop ngay trên dashboard.
-- Chế độ đọc gọn chỉ giữ nút Pause/Play, resize tự do và tùy chọn luôn nổi.
+- Chế độ đọc gọn chỉ giữ nút quay lại 15 giây và Pause/Play, resize tự do và tùy chọn luôn nổi.
 - Thu gọn phần chọn EPUB; phần này tự thu gọn khi bắt đầu nghe.
 - Tự lưu chương và vị trí nghe; mỗi EPUB có state riêng.
 - Tự dùng lại MP3 chương đã hoàn thành.
@@ -43,6 +43,7 @@ Trong chế độ đọc:
 
 - `Space`: Pause/Play.
 - Nút icon `▶` / `⏸`: Pause/Play bằng chuột, kể cả khi cửa sổ rất nhỏ.
+- Nút `↶ 15s`: quay lại 15 giây.
 - `←`: tua lại 15 giây.
 - `→`: tua tới 30 giây.
 - `Esc` hoặc `F9`: trở lại dashboard đầy đủ.

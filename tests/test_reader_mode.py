@@ -172,6 +172,7 @@ class ReaderModeUITests(unittest.TestCase):
                 self.assertEqual(dashboard.reader_card.winfo_manager(), "pack")
                 self.assertEqual(dashboard.reader_text.winfo_manager(), "")
                 self.assertEqual(dashboard.reader_play_button.winfo_manager(), "place")
+                self.assertEqual(dashboard.reader_rewind_button.winfo_manager(), "place")
 
                 event = type(
                     "Event",
@@ -190,6 +191,11 @@ class ReaderModeUITests(unittest.TestCase):
                 ) as mpv_command:
                     dashboard.reader_play_button.invoke()
                     mpv_command.assert_called_once_with(["cycle", "pause"])
+                with mock.patch.object(
+                    dashboard, "mpv_command", return_value=True
+                ) as mpv_command:
+                    dashboard.reader_rewind_button.invoke()
+                    mpv_command.assert_called_once_with(["seek", -15, "relative"])
 
                 book = root_dir / "book.epub"
                 book.write_bytes(b"epub")

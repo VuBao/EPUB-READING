@@ -348,7 +348,16 @@ class AudioDashboard:
             style="ReaderPlay.TButton",
             takefocus=True,
         )
-        self.reader_play_button.place(relx=0.5, rely=0.5, anchor="center")
+        self.reader_rewind_button = ttk.Button(
+            self.reader_body,
+            text="↶ 15s",
+            width=6,
+            command=self.reader_rewind,
+            style="ReaderPlay.TButton",
+            takefocus=True,
+        )
+        self.reader_rewind_button.place(relx=0.35, rely=0.5, anchor="center")
+        self.reader_play_button.place(relx=0.62, rely=0.5, anchor="center")
         self._set_reader_content("")
 
         self.log_card = ttk.Frame(self.outer, style="Card.TFrame", padding=12)
@@ -456,6 +465,9 @@ class AudioDashboard:
 
     def toggle_reader_playback(self):
         return self.mpv_command(["cycle", "pause"])
+
+    def reader_rewind(self):
+        return self.mpv_command(["seek", -15, "relative"])
 
     def change_reader_font(self, delta):
         self.reader_font_size = min(32, max(10, self.reader_font_size + int(delta)))
