@@ -260,6 +260,7 @@ class StateStore:
         self.book = str(Path(book).resolve())
         self.lock = threading.Lock()
         self.last_write = 0.0
+        self.last_chapter_group = None
 
     def load(self):
         try:
@@ -275,10 +276,29 @@ class StateStore:
             return None
         return {**data, "chapter": chapter, "position": position}
 
-    def save(self, chapter, title, group, position, *, force=False, status="playing"):
+    def save(
+        self,
+        chapter,
+        title,
+        group,
+        position,
+        *,
+        force=False,
+        status="playing",
+        current_text="",
+        start_part=0,
+        end_part=0,
+        total_groups=0,
+        text_scope="",
+    ):
         now = time.monotonic()
+        chapter_group = (int(chapter), int(group))
         with self.lock:
-            if not force and now - self.last_write < 2.0:
+            if (
+                not force
+                and chapter_group == self.last_chapter_group
+                and now - self.last_write < 2.0
+            ):
                 return
             payload = {
                 "version": 1,
@@ -288,6 +308,11 @@ class StateStore:
                 "group": int(group),
                 "position": round(max(0.0, float(position)), 3),
                 "status": status,
+                "current_text": str(current_text).strip(),
+                "start_part": int(start_part),
+                "end_part": int(end_part),
+                "total_groups": int(total_groups),
+                "text_scope": str(text_scope),
                 "updated_at": int(time.time()),
             }
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -298,6 +323,7 @@ class StateStore:
             )
             temp_path.replace(self.path)
             self.last_write = now
+            self.last_chapter_group = chapter_group
 
 
 async def synthesize_group_with_fallback(
@@ -572,6 +598,19 @@ class AudioGroup:
     path: Path
     duration: float = 0.0
     existing_chapter: bool = False
+    text: str = ""
+    text_segments: tuple = ()
+
+
+@dataclass(frozen=True)
+class TextSegment:
+    group_index: int
+    total_groups: int
+    start_part: int
+    end_part: int
+    start_time: float
+    end_time: float
+    text: str
 
 
 class AudioPrefetcher:
@@ -586,17 +625,65 @@ class AudioPrefetcher:
         valid = [path for path in matches if path.is_file() and path.stat().st_size > 0]
         return valid[0] if valid and not self.args.overwrite else None
 
+    @staticmethod
+    def _metadata_path(audio_path):
+        return Path(audio_path).with_suffix(".reader.json")
+
+    def _load_text_segments(self, audio_path):
+        try:
+            payload = json.loads(
+                self._metadata_path(audio_path).read_text(encoding="utf-8")
+            )
+            segments = tuple(
+                TextSegment(
+                    group_index=int(item["group_index"]),
+                    total_groups=int(item["total_groups"]),
+                    start_part=int(item["start_part"]),
+                    end_part=int(item["end_part"]),
+                    start_time=max(0.0, float(item["start_time"])),
+                    end_time=max(0.0, float(item["end_time"])),
+                    text=str(item["text"]).strip(),
+                )
+                for item in payload["segments"]
+            )
+            if not segments or any(
+                not segment.text or segment.end_time <= segment.start_time
+                for segment in segments
+            ):
+                return ()
+            return segments
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            return ()
+
+    def _save_text_segments(self, audio_path, chapter, segments):
+        metadata_path = self._metadata_path(audio_path)
+        temporary = metadata_path.with_name(f".{metadata_path.name}.tmp")
+        payload = {
+            "version": 1,
+            "chapter": chapter.index,
+            "chapter_title": chapter.title,
+            "segments": [segment.__dict__ for segment in segments],
+        }
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        temporary.replace(metadata_path)
+
     async def run(self):
         for chapter in self.chapters:
             existing = self.existing_output(chapter)
             if existing:
                 print(f"[CACHE] {existing.name}", flush=True)
                 duration = await asyncio.to_thread(audio_duration, existing)
+                text_segments = self._load_text_segments(existing)
                 await self.queue.put(
                     AudioGroup(
-                        chapter, 1, 1, 1, 1, existing,
+                        chapter, 1, 1, 0, 0, existing,
                         duration=duration,
                         existing_chapter=True,
+                        text=chapter.text,
+                        text_segments=text_segments,
                     )
                 )
                 continue
@@ -613,6 +700,11 @@ class AudioPrefetcher:
         chapter_dir = self.temp_root / f"chapter_{chapter.index:04d}"
         chapter_dir.mkdir(parents=True, exist_ok=True)
         parts = []
+        text_segments = []
+        elapsed = 0.0
+        output = self.args.output_dir / (
+            f"{chapter.index:04d} - {safe_name(chapter.title)}.mp3"
+        )
         print(
             f"[TTS] {chapter.index:04d} - {chapter.title} "
             f"({len(chunks)} phần, {total_groups} group)",
@@ -637,6 +729,19 @@ class AudioPrefetcher:
             )
             parts.append(chapter_part)
             duration = await asyncio.to_thread(audio_duration, chapter_part)
+            group_text = "\n\n".join(group_chunks)
+            text_segments.append(
+                TextSegment(
+                    group_index=group_index,
+                    total_groups=total_groups,
+                    start_part=start_part,
+                    end_part=end_part,
+                    start_time=elapsed,
+                    end_time=elapsed + duration,
+                    text=group_text,
+                )
+            )
+            elapsed += duration
 
             # Playback may delete its copy as soon as the group finishes while
             # chapter_part remains available for the final chapter MP3 concat.
@@ -647,11 +752,14 @@ class AudioPrefetcher:
                     chapter, group_index, total_groups,
                     start_part, end_part, group_path,
                     duration=duration,
+                    text=group_text,
                 )
             )
 
-        output = self.args.output_dir / f"{chapter.index:04d} - {safe_name(chapter.title)}.mp3"
         await asyncio.to_thread(build_final_mp3, parts, output)
+        await asyncio.to_thread(
+            self._save_text_segments, output, chapter, tuple(text_segments)
+        )
         await asyncio.to_thread(update_playlist, self.args.output_dir)
         for part in parts:
             part.unlink(missing_ok=True)
@@ -667,15 +775,45 @@ class PlaybackSession:
         self.resume_position = max(0.0, float(resume_position))
         self.queue = asyncio.Queue(maxsize=max(1, args.buffer_groups))
 
-    def _save_state(self, group, position, *, force=False, status="playing"):
+    @staticmethod
+    def _text_segment_at(group, local_position):
+        if not group.text_segments:
+            return None
+        local_position = max(0.0, float(local_position))
+        for segment in group.text_segments:
+            if local_position < segment.end_time:
+                return segment
+        return group.text_segments[-1]
+
+    def _save_state(
+        self,
+        group,
+        position,
+        *,
+        local_position=None,
+        force=False,
+        status="playing",
+    ):
         if self.state_store:
+            segment = self._text_segment_at(group, local_position or 0.0)
             self.state_store.save(
                 group.chapter.index,
                 group.chapter.title,
-                group.group_index,
+                segment.group_index if segment else group.group_index,
                 position,
                 force=force,
                 status=status,
+                current_text=segment.text if segment else group.text,
+                start_part=segment.start_part if segment else group.start_part,
+                end_part=segment.end_part if segment else group.end_part,
+                total_groups=(
+                    segment.total_groups if segment else group.total_groups
+                ),
+                text_scope=(
+                    "chapter"
+                    if group.existing_chapter and not group.text_segments
+                    else "group"
+                ),
             )
 
     def _save_next_chapter(self, group, completed_position):
@@ -689,7 +827,11 @@ class PlaybackSession:
             next_chapter = self.chapters[current + 1]
         except (StopIteration, IndexError):
             self._save_state(
-                group, completed_position, force=True, status="completed"
+                group,
+                completed_position,
+                local_position=group.duration,
+                force=True,
+                status="completed",
             )
             return
         self.state_store.save(
@@ -755,11 +897,16 @@ class PlaybackSession:
                     )
 
                 def save_progress(local_position):
-                    self._save_state(group, chapter_elapsed + local_position)
+                    self._save_state(
+                        group,
+                        chapter_elapsed + local_position,
+                        local_position=local_position,
+                    )
 
                 self._save_state(
                     group,
                     chapter_elapsed + start_position,
+                    local_position=start_position,
                     force=True,
                 )
                 try:
@@ -773,6 +920,7 @@ class PlaybackSession:
                     self._save_state(
                         group,
                         chapter_elapsed + self.mpv.last_time_pos,
+                        local_position=self.mpv.last_time_pos,
                         force=True,
                         status="paused",
                     )
@@ -783,7 +931,13 @@ class PlaybackSession:
                     group_end,
                     chapter_elapsed + self.mpv.last_time_pos,
                 )
-                self._save_state(group, chapter_elapsed, force=True, status="ready")
+                self._save_state(
+                    group,
+                    chapter_elapsed,
+                    local_position=self.mpv.last_time_pos,
+                    force=True,
+                    status="ready",
+                )
                 self._save_next_chapter(group, chapter_elapsed)
             finally:
                 self.queue.task_done()

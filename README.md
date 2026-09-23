@@ -9,6 +9,9 @@
 - Producer/consumer pipeline với rolling buffer ba group.
 - Prefetch xuyên chương và phát liên tục đến cuối sách.
 - Pause/Play, tua, âm lượng và Stop ngay trên dashboard.
+- Khung text hiển thị đúng nội dung của group audio đang phát.
+- Chế độ đọc gọn, resize tự do, chỉnh cỡ chữ và tùy chọn luôn nổi.
+- Thu gọn phần chọn EPUB; phần này tự thu gọn khi bắt đầu nghe.
 - Tự lưu chương và vị trí nghe; mỗi EPUB có state riêng.
 - Tự dùng lại MP3 chương đã hoàn thành.
 - Tự tạo `audiobook.m3u` cho từng sách.
@@ -33,6 +36,15 @@ Sau đó mở **EPUB Audio Reader** từ Desktop hoặc menu Applications.
 2. Bấm **Tiếp tục lần trước** để resume.
 3. Hoặc nhập số chương rồi bấm **Bắt đầu chương đã chọn**.
 4. Dùng các nút trên dashboard để Pause/Play, tua và chỉnh âm lượng.
+5. Bấm **Chuyển sang chế độ đọc** hoặc `F9` để chỉ giữ lại nội dung đang đọc.
+
+Trong chế độ đọc:
+
+- `Space`: Pause/Play.
+- `←`: tua lại 15 giây.
+- `→`: tua tới 30 giây.
+- `Esc` hoặc `F9`: trở lại dashboard đầy đủ.
+- `A−` / `A+`: thay đổi cỡ chữ.
 
 Khi chuyển sách hoặc chương trong lúc đang phát, dashboard dừng phiên cũ sạch sẽ rồi khởi động phiên mới.
 
@@ -46,6 +58,7 @@ Các dữ liệu cá nhân không được đưa vào Git:
 - Cấu hình dashboard trong `.audio_gui.json`.
 
 Audio và state được tách theo từng EPUB để không dùng nhầm cache hoặc ghi đè tiến độ của sách khác.
+Các chương được tạo mới có thêm metadata `.reader.json` trong thư mục audio để khôi phục đúng text của từng group khi nghe lại MP3 cache. MP3 cũ chưa có metadata vẫn hiển thị text toàn chương và được ghi nhãn rõ trên dashboard.
 
 ## Chạy bằng command
 

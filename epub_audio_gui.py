@@ -39,8 +39,15 @@ class AudioDashboard:
     def __init__(self, root):
         self.root = root
         self.root.title("EPUB Audio Reader")
-        self.root.geometry("820x650")
-        self.root.minsize(720, 580)
+        self.normal_geometry = "900x780"
+        self.reader_geometry = "560x360"
+        self.setup_collapsed = False
+        self.reader_mode = False
+        self.reader_font_size = 16
+        self.reader_always_on_top = False
+        self.last_reader_text = None
+        self.playback_seen = False
+        self.reader_chrome_visible = True
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
         self.process = None
@@ -56,11 +63,30 @@ class AudioDashboard:
         self.current_var = tk.StringVar(value="Chưa bắt đầu")
         self.position_var = tk.StringVar(value="00:00:00")
         self.buffer_var = tk.StringVar(value="Buffer sẽ tự chuẩn bị 3 group phía trước")
+        self.reader_context_var = tk.StringVar(value="Chưa có nội dung đang đọc")
 
         self._load_settings()
+        self.root.geometry(self.normal_geometry)
+        self.root.minsize(720, 620)
         self._configure_style()
         self._build_ui()
         self._load_icon()
+        self.root.attributes("-topmost", False)
+        self.root.bind("<F9>", lambda _event: self.toggle_reader_mode())
+        self.root.bind("<Escape>", self._leave_reader_mode)
+        self.root.bind(
+            "<space>",
+            lambda event: self._reader_shortcut(event, ["cycle", "pause"]),
+        )
+        self.root.bind(
+            "<Left>",
+            lambda event: self._reader_shortcut(event, ["seek", -15, "relative"]),
+        )
+        self.root.bind(
+            "<Right>",
+            lambda event: self._reader_shortcut(event, ["seek", 30, "relative"]),
+        )
+        self.root.bind("<Configure>", self._on_window_configure)
         self._refresh_state()
         self._drain_logs()
 
@@ -96,18 +122,19 @@ class AudioDashboard:
         )
         style.map("Accent.TButton", background=[("active", "#46d5c8")])
         style.configure("Control.TButton", font=("Sans", 10), padding=(10, 8))
+        style.configure("Compact.TButton", font=("Sans", 9), padding=(7, 4))
         style.configure("TEntry", padding=7)
         style.configure("TCombobox", padding=6)
 
     def _build_ui(self):
-        outer = ttk.Frame(self.root, style="App.TFrame", padding=24)
-        outer.pack(fill="both", expand=True)
+        self.outer = ttk.Frame(self.root, style="App.TFrame", padding=24)
+        self.outer.pack(fill="both", expand=True)
 
-        header = ttk.Frame(outer, style="App.TFrame")
-        header.pack(fill="x", pady=(0, 18))
-        self.icon_label = ttk.Label(header, style="App.TFrame")
+        self.header_card = ttk.Frame(self.outer, style="App.TFrame")
+        self.header_card.pack(fill="x", pady=(0, 14))
+        self.icon_label = ttk.Label(self.header_card, style="App.TFrame")
         self.icon_label.pack(side="left", padx=(0, 14))
-        header_text = ttk.Frame(header, style="App.TFrame")
+        header_text = ttk.Frame(self.header_card, style="App.TFrame")
         header_text.pack(side="left", fill="x", expand=True)
         ttk.Label(header_text, text="EPUB Audio Reader", style="Title.TLabel").pack(anchor="w")
         ttk.Label(
@@ -116,25 +143,41 @@ class AudioDashboard:
             style="Subtitle.TLabel",
         ).pack(anchor="w", pady=(3, 0))
 
-        setup = ttk.Frame(outer, style="Card.TFrame", padding=18)
-        setup.pack(fill="x", pady=(0, 14))
-        setup.columnconfigure(1, weight=1)
-        ttk.Label(setup, text="SÁCH EPUB", style="CardTitle.TLabel").grid(
-            row=0, column=0, columnspan=3, sticky="w", pady=(0, 8)
+        self.setup_card = ttk.Frame(self.outer, style="Card.TFrame", padding=14)
+        self.setup_card.pack(fill="x", pady=(0, 12))
+        setup_header = ttk.Frame(self.setup_card, style="Card.TFrame")
+        setup_header.pack(fill="x")
+        ttk.Label(setup_header, text="SÁCH EPUB", style="CardTitle.TLabel").pack(
+            side="left"
         )
-        ttk.Entry(setup, textvariable=self.book_var).grid(
-            row=1, column=0, columnspan=2, sticky="ew", padx=(0, 8)
+        self.setup_toggle_button = ttk.Button(
+            setup_header,
+            text="▲ Thu gọn",
+            command=self.toggle_setup,
+            style="Compact.TButton",
         )
-        ttk.Button(setup, text="Chọn sách…", command=self.choose_book).grid(row=1, column=2)
+        self.setup_toggle_button.pack(side="right")
 
-        ttk.Label(setup, text="Bắt đầu từ chương", style="Info.TLabel").grid(
-            row=2, column=0, sticky="w", pady=(14, 4)
+        self.setup_body = ttk.Frame(self.setup_card, style="Card.TFrame")
+        self.setup_body.pack(fill="x", pady=(10, 0))
+        self.setup_body.columnconfigure(1, weight=1)
+        ttk.Entry(self.setup_body, textvariable=self.book_var).grid(
+            row=0, column=0, columnspan=2, sticky="ew", padx=(0, 8)
         )
-        ttk.Label(setup, text="Giọng đọc", style="Info.TLabel").grid(
-            row=2, column=1, sticky="w", pady=(14, 4), padx=(12, 0)
+        ttk.Button(
+            self.setup_body, text="Chọn sách…", command=self.choose_book
+        ).grid(row=0, column=2)
+
+        ttk.Label(
+            self.setup_body, text="Bắt đầu từ chương", style="Info.TLabel"
+        ).grid(
+            row=1, column=0, sticky="w", pady=(14, 4)
+        )
+        ttk.Label(self.setup_body, text="Giọng đọc", style="Info.TLabel").grid(
+            row=1, column=1, sticky="w", pady=(14, 4), padx=(12, 0)
         )
         self.chapter_input = tk.Entry(
-            setup,
+            self.setup_body,
             textvariable=self.chapter_var,
             width=12,
             justify="center",
@@ -149,19 +192,19 @@ class AudioDashboard:
             highlightbackground="#cbd5e1",
             highlightcolor="#19b8aa",
         )
-        self.chapter_input.grid(row=3, column=0, sticky="w", ipady=7)
+        self.chapter_input.grid(row=2, column=0, sticky="w", ipady=7)
         self.chapter_input.bind("<Return>", lambda _event: self.start(resume=False))
         self.chapter_input.bind("<Control-a>", self._select_chapter)
         voice = ttk.Combobox(
-            setup,
+            self.setup_body,
             textvariable=self.voice_var,
             values=("vi-VN-NamMinhNeural", "vi-VN-HoaiMyNeural"),
             state="readonly",
         )
-        voice.grid(row=3, column=1, sticky="ew", padx=(12, 8))
+        voice.grid(row=2, column=1, sticky="ew", padx=(12, 8))
 
-        actions = ttk.Frame(setup, style="Card.TFrame")
-        actions.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(18, 0))
+        actions = ttk.Frame(self.setup_body, style="Card.TFrame")
+        actions.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(18, 0))
         ttk.Button(
             actions, text="▶  Tiếp tục lần trước", style="Accent.TButton",
             command=lambda: self.start(resume=True),
@@ -175,25 +218,33 @@ class AudioDashboard:
             command=self.open_audio_folder,
         ).pack(side="right")
 
-        now = ttk.Frame(outer, style="Card.TFrame", padding=18)
-        now.pack(fill="x", pady=(0, 14))
-        now.columnconfigure(0, weight=1)
-        ttk.Label(now, text="ĐANG NGHE", style="CardTitle.TLabel").grid(
+        self.now_card = ttk.Frame(self.outer, style="Card.TFrame", padding=14)
+        self.now_card.pack(fill="x", pady=(0, 12))
+        self.now_card.columnconfigure(0, weight=1)
+        ttk.Label(self.now_card, text="ĐANG NGHE", style="CardTitle.TLabel").grid(
             row=0, column=0, sticky="w"
         )
-        self.status_label = ttk.Label(now, textvariable=self.status_var, style="Info.TLabel")
+        self.status_label = ttk.Label(
+            self.now_card, textvariable=self.status_var, style="Info.TLabel"
+        )
         self.status_label.grid(row=0, column=1, sticky="e")
-        ttk.Label(now, textvariable=self.current_var, style="Value.TLabel").grid(
+        ttk.Label(
+            self.now_card, textvariable=self.current_var, style="Value.TLabel"
+        ).grid(
             row=1, column=0, sticky="w", pady=(8, 2)
         )
-        ttk.Label(now, textvariable=self.position_var, style="Value.TLabel").grid(
+        ttk.Label(
+            self.now_card, textvariable=self.position_var, style="Value.TLabel"
+        ).grid(
             row=1, column=1, sticky="e", pady=(8, 2)
         )
-        ttk.Label(now, textvariable=self.buffer_var, style="Info.TLabel").grid(
+        ttk.Label(
+            self.now_card, textvariable=self.buffer_var, style="Info.TLabel"
+        ).grid(
             row=2, column=0, columnspan=2, sticky="w", pady=(5, 12)
         )
 
-        controls = ttk.Frame(now, style="Card.TFrame")
+        controls = ttk.Frame(self.now_card, style="Card.TFrame")
         controls.grid(row=3, column=0, columnspan=2, sticky="ew")
         for text, command in (
             ("↶ 15s", lambda: self.mpv_command(["seek", -15, "relative"])),
@@ -207,15 +258,204 @@ class AudioDashboard:
                 side="left", padx=(0, 7)
             )
 
-        log_card = ttk.Frame(outer, style="Card.TFrame", padding=14)
-        log_card.pack(fill="both", expand=True)
-        ttk.Label(log_card, text="HOẠT ĐỘNG", style="CardTitle.TLabel").pack(anchor="w")
+        self.reader_card = ttk.Frame(self.outer, style="Card.TFrame", padding=14)
+        self.reader_card.pack(fill="both", expand=True, pady=(0, 12))
+        self.reader_header = ttk.Frame(self.reader_card, style="Card.TFrame")
+        self.reader_header.pack(fill="x", pady=(0, 8))
+        ttk.Label(
+            self.reader_header, text="NỘI DUNG ĐANG ĐỌC", style="CardTitle.TLabel"
+        ).pack(side="left")
+        self.reader_mode_button = ttk.Button(
+            self.reader_header,
+            text="Chuyển sang chế độ đọc  F9",
+            command=self.toggle_reader_mode,
+            style="Compact.TButton",
+        )
+        self.reader_mode_button.pack(side="right")
+        ttk.Button(
+            self.reader_header,
+            text="A+",
+            command=lambda: self.change_reader_font(1),
+            style="Compact.TButton",
+        ).pack(side="right", padx=(4, 0))
+        ttk.Button(
+            self.reader_header,
+            text="A−",
+            command=lambda: self.change_reader_font(-1),
+            style="Compact.TButton",
+        ).pack(side="right", padx=(4, 0))
+        self.always_on_top_var = tk.BooleanVar(value=self.reader_always_on_top)
+        ttk.Checkbutton(
+            self.reader_header,
+            text="Luôn nổi",
+            variable=self.always_on_top_var,
+            command=self.toggle_always_on_top,
+        ).pack(side="right", padx=(8, 4))
+        self.reader_context_label = ttk.Label(
+            self.reader_card,
+            textvariable=self.reader_context_var,
+            style="Info.TLabel",
+        )
+        self.reader_context_label.pack(fill="x", pady=(0, 6))
+        self.reader_body = ttk.Frame(self.reader_card, style="Card.TFrame")
+        self.reader_body.pack(fill="both", expand=True)
+        self.reader_body.columnconfigure(0, weight=1)
+        self.reader_body.rowconfigure(0, weight=1)
+        self.reader_text = tk.Text(
+            self.reader_body,
+            height=7,
+            wrap="word",
+            bg="#0d1522",
+            fg="#f1f5f9",
+            insertbackground="white",
+            selectbackground="#19b8aa",
+            selectforeground="#071a1a",
+            relief="flat",
+            padx=14,
+            pady=12,
+            spacing1=3,
+            spacing3=5,
+            font=("Sans", self.reader_font_size),
+            state="disabled",
+        )
+        reader_scroll = ttk.Scrollbar(
+            self.reader_body, orient="vertical", command=self.reader_text.yview
+        )
+        self.reader_text.configure(yscrollcommand=reader_scroll.set)
+        self.reader_text.grid(row=0, column=0, sticky="nsew")
+        reader_scroll.grid(row=0, column=1, sticky="ns")
+        self._set_reader_content("")
+
+        self.log_card = ttk.Frame(self.outer, style="Card.TFrame", padding=12)
+        self.log_card.pack(fill="x")
+        ttk.Label(
+            self.log_card, text="HOẠT ĐỘNG", style="CardTitle.TLabel"
+        ).pack(anchor="w")
         self.log = tk.Text(
-            log_card, height=8, wrap="word", bg="#0d1522", fg="#c9d6e6",
+            self.log_card, height=4, wrap="word", bg="#0d1522", fg="#c9d6e6",
             insertbackground="white", relief="flat", padx=10, pady=8,
             font=("Monospace", 9), state="disabled",
         )
         self.log.pack(fill="both", expand=True, pady=(8, 0))
+        self._set_setup_collapsed(self.setup_collapsed, persist=False)
+
+    def toggle_setup(self):
+        self._set_setup_collapsed(not self.setup_collapsed)
+
+    def _set_setup_collapsed(self, collapsed, *, persist=True):
+        self.setup_collapsed = bool(collapsed)
+        if self.setup_collapsed:
+            self.setup_body.pack_forget()
+            self.setup_toggle_button.configure(text="▼ Mở rộng")
+        else:
+            self.setup_body.pack(fill="x", pady=(10, 0))
+            self.setup_toggle_button.configure(text="▲ Thu gọn")
+        if persist:
+            self._save_settings()
+
+    def toggle_reader_mode(self):
+        if self.reader_mode:
+            self._leave_reader_mode()
+        else:
+            self._enter_reader_mode()
+
+    def _enter_reader_mode(self):
+        if self.reader_mode:
+            return
+        self.normal_geometry = self.root.geometry()
+        self.reader_mode = True
+        for section in (
+            self.header_card,
+            self.setup_card,
+            self.now_card,
+            self.reader_card,
+            self.log_card,
+        ):
+            section.pack_forget()
+        self.outer.configure(padding=8)
+        self.reader_card.pack(fill="both", expand=True)
+        self.reader_mode_button.configure(text="Trở lại dashboard  Esc")
+        self.root.minsize(320, 180)
+        self.root.geometry(self.reader_geometry)
+        self.root.attributes("-topmost", self.reader_always_on_top)
+        self.root.after_idle(self._refresh_reader_layout)
+        self.root.after_idle(self.reader_text.focus_set)
+        self._save_settings()
+
+    def _leave_reader_mode(self, _event=None):
+        if not self.reader_mode:
+            return
+        self.reader_geometry = self.root.geometry()
+        self.reader_mode = False
+        self.reader_card.pack_forget()
+        self.outer.configure(padding=24)
+        self.header_card.pack(fill="x", pady=(0, 14))
+        self.setup_card.pack(fill="x", pady=(0, 12))
+        self.now_card.pack(fill="x", pady=(0, 12))
+        self.reader_card.pack(fill="both", expand=True, pady=(0, 12))
+        self.log_card.pack(fill="x")
+        self.reader_mode_button.configure(text="Chuyển sang chế độ đọc  F9")
+        self._set_reader_chrome(True)
+        self.root.attributes("-topmost", False)
+        self.root.minsize(720, 620)
+        self.root.geometry(self.normal_geometry)
+        self._save_settings()
+
+    def _on_window_configure(self, event):
+        if event.widget is self.root and self.reader_mode:
+            self._set_reader_chrome(event.width >= 500 and event.height >= 300)
+
+    def _refresh_reader_layout(self):
+        if self.reader_mode:
+            self._set_reader_chrome(
+                self.root.winfo_width() >= 500 and self.root.winfo_height() >= 300
+            )
+
+    def _set_reader_chrome(self, visible):
+        visible = bool(visible)
+        if visible == self.reader_chrome_visible:
+            return
+        self.reader_chrome_visible = visible
+        if visible:
+            self.reader_header.pack(
+                fill="x", pady=(0, 8), before=self.reader_body
+            )
+            self.reader_context_label.pack(
+                fill="x", pady=(0, 6), before=self.reader_body
+            )
+        else:
+            self.reader_header.pack_forget()
+            self.reader_context_label.pack_forget()
+
+    def _reader_shortcut(self, _event, command):
+        if not self.reader_mode:
+            return None
+        self.mpv_command(command)
+        return "break"
+
+    def change_reader_font(self, delta):
+        self.reader_font_size = min(32, max(10, self.reader_font_size + int(delta)))
+        self.reader_text.configure(font=("Sans", self.reader_font_size))
+        self._save_settings()
+
+    def toggle_always_on_top(self):
+        self.reader_always_on_top = bool(self.always_on_top_var.get())
+        if self.reader_mode:
+            self.root.attributes("-topmost", self.reader_always_on_top)
+        self._save_settings()
+
+    def _set_reader_content(self, text):
+        content = str(text or "").strip()
+        if not content:
+            content = "Nội dung của group đang phát sẽ xuất hiện tại đây."
+        if content == self.last_reader_text:
+            return
+        self.last_reader_text = content
+        self.reader_text.configure(state="normal")
+        self.reader_text.delete("1.0", "end")
+        self.reader_text.insert("1.0", content)
+        self.reader_text.configure(state="disabled")
+        self.reader_text.yview_moveto(0)
 
     def _load_icon(self):
         if not ICON.exists():
@@ -333,12 +573,45 @@ class AudioDashboard:
         self.chapter_var.set(chapter if chapter.isdigit() else "1")
         if settings.get("voice"):
             self.voice_var.set(settings["voice"])
+        self.setup_collapsed = bool(settings.get("setup_collapsed", False))
+        try:
+            self.reader_font_size = min(
+                32, max(10, int(settings.get("reader_font_size", 16)))
+            )
+        except (TypeError, ValueError):
+            self.reader_font_size = 16
+        self.reader_always_on_top = bool(
+            settings.get("reader_always_on_top", False)
+        )
+        normal_geometry = settings.get("normal_geometry")
+        reader_geometry = settings.get("reader_geometry")
+        if self._valid_geometry(normal_geometry):
+            self.normal_geometry = normal_geometry
+        if self._valid_geometry(reader_geometry):
+            self.reader_geometry = reader_geometry
+
+    @staticmethod
+    def _valid_geometry(value):
+        return bool(
+            isinstance(value, str)
+            and re.fullmatch(r"\d+x\d+(?:[+-]\d+[+-]\d+)?", value)
+        )
 
     def _save_settings(self):
+        if hasattr(self, "reader_text"):
+            if self.reader_mode:
+                self.reader_geometry = self.root.geometry()
+            else:
+                self.normal_geometry = self.root.geometry()
         payload = {
             "book": self.book_var.get().strip(),
             "chapter": self.chapter_var.get().strip(),
             "voice": self.voice_var.get(),
+            "setup_collapsed": self.setup_collapsed,
+            "reader_font_size": self.reader_font_size,
+            "reader_always_on_top": self.reader_always_on_top,
+            "normal_geometry": self.normal_geometry,
+            "reader_geometry": self.reader_geometry,
         }
         temp = SETTINGS_FILE.with_name(f".{SETTINGS_FILE.name}.tmp")
         temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -374,6 +647,7 @@ class AudioDashboard:
         if process_running or mpv_running:
             if resume:
                 self.status_var.set("Đang điều khiển phiên hiện tại")
+                self._set_setup_collapsed(True)
                 return
             self.status_var.set(f"Đang chuyển sang chương {chapter}…")
             self._append_log(f"Chuyển phiên nghe sang chương {chapter}…")
@@ -435,6 +709,8 @@ class AudioDashboard:
             messagebox.showerror("Không thể khởi động", str(exc))
             return
         self.active_book = Path(book).resolve()
+        self.playback_seen = False
+        self._set_setup_collapsed(True)
         self.status_var.set("Đang khởi động…")
         self._append_log("Khởi động phiên nghe…")
         threading.Thread(
@@ -513,6 +789,21 @@ class AudioDashboard:
                 chapter_label = f"Chương {chapter}"
             self.current_var.set(f"{chapter_label}  •  Group {group}")
             self.position_var.set(format_time(data.get("position", 0)))
+            total_groups = data.get("total_groups", 0)
+            group_label = f"Group {group}"
+            if total_groups:
+                group_label += f"/{total_groups}"
+            start_part = data.get("start_part", 0)
+            end_part = data.get("end_part", 0)
+            part_label = ""
+            if start_part and end_part:
+                part_label = f" • phần {start_part}–{end_part}"
+            elif data.get("text_scope") == "chapter":
+                part_label = " • toàn chương (MP3 cache cũ)"
+            self.reader_context_var.set(
+                f"{chapter_label} • {group_label}{part_label}"
+            )
+            self._set_reader_content(data.get("current_text", ""))
             if not process_running:
                 status = data.get("status", "ready")
                 labels = {
@@ -527,6 +818,9 @@ class AudioDashboard:
         path_response = self._ipc_request(["get_property", "path"])
         current_path = path_response.get("data") if path_response else None
         if current_path:
+            if not self.playback_seen:
+                self.playback_seen = True
+                self._set_setup_collapsed(True)
             position_response = self._ipc_request(["get_property", "time-pos"])
             pause_response = self._ipc_request(["get_property", "pause"])
             current_position = position_response.get("data") if position_response else None

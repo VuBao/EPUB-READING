@@ -1,0 +1,131 @@
+import argparse
+import json
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+import epub2audio
+import epub_audio_gui as gui
+
+
+class ReaderSyncTests(unittest.TestCase):
+    def test_state_updates_immediately_when_group_changes(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            book = root / "book.epub"
+            book.write_bytes(b"test")
+            store = epub2audio.StateStore(root / "state.json", book)
+            store.save(
+                1,
+                "Chapter",
+                1,
+                1.0,
+                force=True,
+                current_text="Group one",
+                start_part=1,
+                end_part=3,
+                total_groups=2,
+                text_scope="group",
+            )
+            store.save(
+                1,
+                "Chapter",
+                2,
+                1.1,
+                current_text="Group two",
+                start_part=4,
+                end_part=6,
+                total_groups=2,
+                text_scope="group",
+            )
+            state = json.loads((root / "state.json").read_text())
+            self.assertEqual(state["group"], 2)
+            self.assertEqual(state["current_text"], "Group two")
+
+    def test_cached_audio_metadata_round_trip(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            audio = root / "0001 - Chapter.mp3"
+            audio.write_bytes(b"audio")
+            args = argparse.Namespace(output_dir=root, overwrite=False)
+            prefetcher = epub2audio.AudioPrefetcher([], None, root, args)
+            chapter = epub2audio.Chapter(1, "Chapter", "Text")
+            segments = (
+                epub2audio.TextSegment(1, 2, 1, 3, 0.0, 4.0, "First"),
+                epub2audio.TextSegment(2, 2, 4, 6, 4.0, 8.0, "Second"),
+            )
+            prefetcher._save_text_segments(audio, chapter, segments)
+            self.assertEqual(prefetcher._load_text_segments(audio), segments)
+
+            group = epub2audio.AudioGroup(
+                chapter,
+                1,
+                1,
+                0,
+                0,
+                audio,
+                duration=8.0,
+                existing_chapter=True,
+                text=chapter.text,
+                text_segments=segments,
+            )
+            self.assertEqual(
+                epub2audio.PlaybackSession._text_segment_at(group, 2.0).text,
+                "First",
+            )
+            self.assertEqual(
+                epub2audio.PlaybackSession._text_segment_at(group, 6.0).text,
+                "Second",
+            )
+
+
+@unittest.skipUnless(os.environ.get("DISPLAY"), "Tk UI test requires DISPLAY")
+class ReaderModeUITests(unittest.TestCase):
+    def test_compact_mode_and_responsive_text_only_layout(self):
+        import tkinter as tk
+
+        with tempfile.TemporaryDirectory() as raw:
+            root_dir = Path(raw)
+            with mock.patch.object(gui, "SETTINGS_FILE", root_dir / "settings.json"), \
+                    mock.patch.object(gui, "STATE_DIR", root_dir / "states"), \
+                    mock.patch.object(gui, "AUDIO_ROOT", root_dir / "audio"), \
+                    mock.patch.object(gui, "LEGACY_STATE_FILE", root_dir / "legacy.json"), \
+                    mock.patch.object(gui.AudioDashboard, "_ipc_request", return_value=None):
+                root = tk.Tk(className="EpubAudioReaderTest")
+                root.withdraw()
+                dashboard = gui.AudioDashboard(root)
+                root.update_idletasks()
+
+                dashboard.toggle_setup()
+                self.assertTrue(dashboard.setup_collapsed)
+                self.assertEqual(dashboard.setup_body.winfo_manager(), "")
+
+                dashboard._set_reader_content("Text đang đọc")
+                dashboard._enter_reader_mode()
+                self.assertTrue(dashboard.reader_mode)
+                self.assertEqual(dashboard.header_card.winfo_manager(), "")
+                self.assertEqual(dashboard.reader_card.winfo_manager(), "pack")
+
+                event = type(
+                    "Event",
+                    (),
+                    {"widget": root, "width": 430, "height": 240},
+                )()
+                dashboard._on_window_configure(event)
+                self.assertFalse(dashboard.reader_chrome_visible)
+                self.assertEqual(dashboard.reader_header.winfo_manager(), "")
+                self.assertEqual(
+                    dashboard.reader_text.get("1.0", "end-1c"),
+                    "Text đang đọc",
+                )
+
+                dashboard._leave_reader_mode()
+                self.assertFalse(dashboard.reader_mode)
+                self.assertEqual(dashboard.header_card.winfo_manager(), "pack")
+                root.destroy()
+
+
+if __name__ == "__main__":
+    unittest.main()
