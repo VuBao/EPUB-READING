@@ -332,6 +332,13 @@ class AudioDashboard:
             font=("Sans", self.reader_font_size),
             state="disabled",
         )
+        self.reader_text.tag_configure(
+            "current_range",
+            background="#f59e0b",
+            foreground="#111827",
+            spacing1=4,
+            spacing3=6,
+        )
         reader_scroll = ttk.Scrollbar(
             self.reader_body, orient="vertical", command=self.reader_text.yview
         )
@@ -472,14 +479,19 @@ class AudioDashboard:
 
     def _set_reader_content(self, text):
         content = str(text or "").strip()
-        if not content:
+        has_content = bool(content)
+        if not has_content:
             content = "Nội dung của group đang phát sẽ xuất hiện tại đây."
-        if content == self.last_reader_text:
+        cache_key = (content, has_content)
+        if cache_key == self.last_reader_text:
             return
-        self.last_reader_text = content
+        self.last_reader_text = cache_key
         self.reader_text.configure(state="normal")
         self.reader_text.delete("1.0", "end")
         self.reader_text.insert("1.0", content)
+        self.reader_text.tag_remove("current_range", "1.0", "end")
+        if has_content:
+            self.reader_text.tag_add("current_range", "1.0", "end-1c")
         self.reader_text.configure(state="disabled")
         self.reader_text.yview_moveto(0)
 

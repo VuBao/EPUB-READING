@@ -170,6 +170,9 @@ class ReaderModeUITests(unittest.TestCase):
                 self.assertTrue(dashboard.reader_mode)
                 self.assertEqual(dashboard.header_card.winfo_manager(), "")
                 self.assertEqual(dashboard.reader_card.winfo_manager(), "pack")
+                self.assertTrue(
+                    dashboard.reader_text.tag_ranges("current_range")
+                )
 
                 event = type(
                     "Event",
