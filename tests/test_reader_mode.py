@@ -49,7 +49,11 @@ class ReaderSyncTests(unittest.TestCase):
             root = Path(raw)
             audio = root / "0001 - Chapter.mp3"
             audio.write_bytes(b"audio")
-            args = argparse.Namespace(output_dir=root, overwrite=False)
+            args = argparse.Namespace(
+                output_dir=root,
+                overwrite=False,
+                voice="vi-VN-HoaiMyNeural",
+            )
             prefetcher = epub2audio.AudioPrefetcher([], None, root, args)
             chapter = epub2audio.Chapter(1, "Chapter", "Text")
             segments = (
@@ -78,6 +82,43 @@ class ReaderSyncTests(unittest.TestCase):
             self.assertEqual(
                 epub2audio.PlaybackSession._text_segment_at(group, 6.0).text,
                 "Second",
+            )
+
+    def test_voice_cache_is_not_reused_for_another_voice(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            audio = root / "0001 - Chapter.mp3"
+            audio.write_bytes(b"audio")
+            chapter = epub2audio.Chapter(1, "Chapter", "Text")
+
+            default_args = argparse.Namespace(
+                output_dir=root,
+                overwrite=False,
+                voice="vi-VN-NamMinhNeural",
+            )
+            other_args = argparse.Namespace(
+                output_dir=root,
+                overwrite=False,
+                voice="vi-VN-HoaiMyNeural",
+            )
+            self.assertEqual(
+                epub2audio.AudioPrefetcher([], None, root, default_args)
+                .existing_output(chapter),
+                audio,
+            )
+            self.assertIsNone(
+                epub2audio.AudioPrefetcher([], None, root, other_args)
+                .existing_output(chapter)
+            )
+
+            metadata = audio.with_suffix(".reader.json")
+            metadata.write_text(
+                json.dumps({"voice": "vi-VN-HoaiMyNeural", "segments": []})
+            )
+            self.assertEqual(
+                epub2audio.AudioPrefetcher([], None, root, other_args)
+                .existing_output(chapter),
+                audio,
             )
 
 
@@ -129,6 +170,26 @@ class ReaderModeUITests(unittest.TestCase):
                 ) as mpv_command:
                     dashboard.reader_play_button.invoke()
                     mpv_command.assert_called_once_with(["cycle", "pause"])
+
+                book = root_dir / "book.epub"
+                book.write_bytes(b"epub")
+                dashboard.voice_var.set("vi-VN-HoaiMyNeural")
+                dashboard._migrate_book_data = mock.Mock()
+                dashboard._has_resume_for = mock.Mock(return_value=False)
+                process = mock.Mock(pid=1234, stdout=None)
+                with mock.patch.object(
+                    gui.subprocess, "Popen", return_value=process
+                ) as popen:
+                    dashboard._launch(book, 4, resume=False)
+                    command = popen.call_args.args[0]
+                    self.assertEqual(
+                        command[command.index("--voice") + 1],
+                        "vi-VN-HoaiMyNeural",
+                    )
+                    self.assertIn(
+                        "vi-VN-HoaiMyNeural",
+                        command[command.index("--output-dir") + 1],
+                    )
 
                 responses = {
                     "path": {"data": "/tmp/chapter_0001/group_0001.mp3"},

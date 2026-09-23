@@ -23,6 +23,8 @@ STATE_DIR = PROJECT_DIR / ".audio_states"
 SETTINGS_FILE = PROJECT_DIR / ".audio_gui.json"
 MPV_SOCKET = Path("/tmp/epub2audio-mpv.sock")
 AUDIO_ROOT = PROJECT_DIR / "audio"
+DEFAULT_VOICE = "vi-VN-NamMinhNeural"
+VOICE_CHOICES = (DEFAULT_VOICE, "vi-VN-HoaiMyNeural")
 
 
 def format_time(seconds):
@@ -47,18 +49,20 @@ class AudioDashboard:
         self.reader_always_on_top = False
         self.last_reader_text = None
         self.playback_seen = False
+        self.last_voice = DEFAULT_VOICE
         self.reader_chrome_visible = True
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
         self.process = None
         self.active_book = None
+        self.active_voice = None
         self.log_queue = queue.Queue()
         self.icon_image = None
         self.header_icon = None
 
         self.book_var = tk.StringVar(value=self._default_book())
         self.chapter_var = tk.StringVar(value="1")
-        self.voice_var = tk.StringVar(value="vi-VN-NamMinhNeural")
+        self.voice_var = tk.StringVar(value=DEFAULT_VOICE)
         self.status_var = tk.StringVar(value="Sẵn sàng")
         self.current_var = tk.StringVar(value="Chưa bắt đầu")
         self.position_var = tk.StringVar(value="00:00:00")
@@ -66,6 +70,7 @@ class AudioDashboard:
         self.reader_context_var = tk.StringVar(value="Chưa có nội dung đang đọc")
 
         self._load_settings()
+        self.last_voice = self.voice_var.get().strip() or DEFAULT_VOICE
         self.root.geometry(self.normal_geometry)
         self.root.minsize(720, 620)
         self._configure_style()
@@ -201,7 +206,7 @@ class AudioDashboard:
         voice = ttk.Combobox(
             self.setup_body,
             textvariable=self.voice_var,
-            values=("vi-VN-NamMinhNeural", "vi-VN-HoaiMyNeural"),
+            values=VOICE_CHOICES,
             state="readonly",
         )
         voice.grid(row=2, column=1, sticky="ew", padx=(12, 8))
@@ -501,9 +506,16 @@ class AudioDashboard:
         digest = hashlib.sha256(resolved.encode("utf-8")).hexdigest()[:10]
         return f"{safe[:100]}-{digest}"
 
+    @staticmethod
+    def _voice_key(voice):
+        return re.sub(r"[^A-Za-z0-9._-]+", "_", str(voice).strip()) or "default"
+
     @classmethod
-    def _book_audio_dir(cls, book):
-        return AUDIO_ROOT / cls._book_key(book)
+    def _book_audio_dir(cls, book, voice=None):
+        output_dir = AUDIO_ROOT / cls._book_key(book)
+        if voice:
+            output_dir /= cls._voice_key(voice)
+        return output_dir
 
     @classmethod
     def _book_state_file(cls, book):
@@ -517,6 +529,7 @@ class AudioDashboard:
 
     def _migrate_book_data(self, book):
         """Copy matching legacy data into the per-book namespace safely."""
+        voice = self.voice_var.get().strip() or DEFAULT_VOICE
         try:
             legacy = json.loads(LEGACY_STATE_FILE.read_text(encoding="utf-8"))
             same_book = (
@@ -526,10 +539,15 @@ class AudioDashboard:
             legacy = None
             same_book = False
 
-        output_dir = self._book_audio_dir(book)
+        output_dir = self._book_audio_dir(book, voice)
         output_dir.mkdir(parents=True, exist_ok=True)
         legacy_dir = self._legacy_audio_dir(book)
-        if same_book and legacy_dir != output_dir and legacy_dir.is_dir():
+        if (
+            same_book
+            and voice == DEFAULT_VOICE
+            and legacy_dir != output_dir
+            and legacy_dir.is_dir()
+        ):
             for source in legacy_dir.glob("[0-9][0-9][0-9][0-9] - *.mp3"):
                 target = output_dir / source.name
                 if not target.exists() and source.stat().st_size > 0:
@@ -586,7 +604,7 @@ class AudioDashboard:
             self.book_var.set(book)
         chapter = str(settings.get("chapter", self.chapter_var.get())).strip()
         self.chapter_var.set(chapter if chapter.isdigit() else "1")
-        if settings.get("voice"):
+        if settings.get("voice") in VOICE_CHOICES:
             self.voice_var.set(settings["voice"])
         self.setup_collapsed = bool(settings.get("setup_collapsed", False))
         try:
@@ -656,34 +674,41 @@ class AudioDashboard:
             return
         self.chapter_var.set(str(chapter))
 
+        voice = self.voice_var.get().strip() or DEFAULT_VOICE
+        voice_changed = voice != self.last_voice
         self._save_settings()
         process_running = self.process and self.process.poll() is None
         mpv_running = self._ipc_request(["get_property", "idle-active"]) is not None
         if process_running or mpv_running:
-            if resume:
+            if resume and not voice_changed:
                 self.status_var.set("Đang điều khiển phiên hiện tại")
                 self._set_setup_collapsed(True)
                 return
-            self.status_var.set(f"Đang chuyển sang chương {chapter}…")
-            self._append_log(f"Chuyển phiên nghe sang chương {chapter}…")
+            action = "Đổi giọng đọc" if voice_changed else "Chuyển chương"
+            self.status_var.set(f"{action}, đang khởi động lại phiên…")
+            self._append_log(f"{action}: dừng phiên hiện tại…")
             if mpv_running:
                 self.mpv_command(["quit"], quiet=True)
             elif process_running:
                 self.process.terminate()
             self.root.after(
                 250,
-                lambda: self._launch_when_stopped(book, chapter, attempts_left=40),
+                lambda: self._launch_when_stopped(
+                    book, chapter, attempts_left=40, resume=resume
+                ),
             )
             return
         self._launch(book, chapter, resume)
 
-    def _launch_when_stopped(self, book, chapter, attempts_left):
+    def _launch_when_stopped(self, book, chapter, attempts_left, resume=False):
         process_running = self.process and self.process.poll() is None
         mpv_running = self._ipc_request(["get_property", "idle-active"]) is not None
         if (process_running or mpv_running) and attempts_left > 0:
             self.root.after(
                 250,
-                lambda: self._launch_when_stopped(book, chapter, attempts_left - 1),
+                lambda: self._launch_when_stopped(
+                    book, chapter, attempts_left - 1, resume=resume
+                ),
             )
             return
         if process_running or mpv_running:
@@ -692,15 +717,16 @@ class AudioDashboard:
                 "Phiên nghe cũ chưa dừng. Hãy bấm Dừng rồi thử lại.",
             )
             return
-        self._launch(book, chapter, resume=False)
+        self._launch(book, chapter, resume=resume)
 
     def _launch(self, book, chapter, resume):
         self._migrate_book_data(book)
-        output_dir = self._book_audio_dir(book)
+        voice = self.voice_var.get().strip() or DEFAULT_VOICE
+        output_dir = self._book_audio_dir(book, voice)
         state_file = self._book_state_file(book)
         command = [
             sys.executable, "-u", str(BACKEND), str(book.resolve()),
-            "--voice", self.voice_var.get(),
+            "--voice", voice,
             "--stream", "--group-size", "3", "--buffer-groups", "3",
             "--persistent-mpv",
             "--output-dir", str(output_dir),
@@ -724,6 +750,8 @@ class AudioDashboard:
             messagebox.showerror("Không thể khởi động", str(exc))
             return
         self.active_book = Path(book).resolve()
+        self.active_voice = voice
+        self.last_voice = voice
         self.playback_seen = False
         self._set_setup_collapsed(True)
         self.status_var.set("Đang khởi động…")
@@ -754,6 +782,7 @@ class AudioDashboard:
                     _, pid, code = line.split(":", 2)
                     if self.process and self.process.pid == int(pid):
                         self.active_book = None
+                        self.active_voice = None
                         self.status_var.set(
                             "Đã dừng" if int(code) == 0 else "Có lỗi — xem hoạt động"
                         )
@@ -901,7 +930,8 @@ class AudioDashboard:
         book = Path(self.book_var.get().strip()).expanduser()
         if book.name:
             self._migrate_book_data(book)
-            output_dir = self._book_audio_dir(book)
+            voice = self.voice_var.get().strip() or DEFAULT_VOICE
+            output_dir = self._book_audio_dir(book, voice)
         else:
             output_dir = AUDIO_ROOT
         output_dir.mkdir(parents=True, exist_ok=True)

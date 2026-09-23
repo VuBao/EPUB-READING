@@ -136,6 +136,7 @@ def split_text(text, max_chars=2800):
 
 
 MPV_SOCKET = Path("/tmp/epub2audio-mpv.sock")
+DEFAULT_VOICE = "vi-VN-NamMinhNeural"
 
 async def synthesize_chunk(text, out_file, voice, rate, pitch, volume):
     import edge_tts
@@ -623,7 +624,19 @@ class AudioPrefetcher:
     def existing_output(self, chapter):
         matches = sorted(self.args.output_dir.glob(f"{chapter.index:04d} - *.mp3"))
         valid = [path for path in matches if path.is_file() and path.stat().st_size > 0]
-        return valid[0] if valid and not self.args.overwrite else None
+        if self.args.overwrite:
+            return None
+        for path in valid:
+            try:
+                metadata = json.loads(
+                    self._metadata_path(path).read_text(encoding="utf-8")
+                )
+                cached_voice = metadata.get("voice", DEFAULT_VOICE)
+            except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                cached_voice = DEFAULT_VOICE
+            if cached_voice == self.args.voice:
+                return path
+        return None
 
     @staticmethod
     def _metadata_path(audio_path):
@@ -662,6 +675,7 @@ class AudioPrefetcher:
             "version": 1,
             "chapter": chapter.index,
             "chapter_title": chapter.title,
+            "voice": self.args.voice,
             "segments": [segment.__dict__ for segment in segments],
         }
         temporary.write_text(
