@@ -203,6 +203,12 @@ class AudioDashboard:
         self.chapter_input.grid(row=2, column=0, sticky="w", ipady=7)
         self.chapter_input.bind("<Return>", lambda _event: self.start(resume=False))
         self.chapter_input.bind("<Control-a>", self._select_chapter)
+        chapter_tag = "EpubChapterDigits"
+        self.chapter_input.bindtags(
+            (chapter_tag,) + tuple(self.chapter_input.bindtags())
+        )
+        self.root.bind_class(chapter_tag, "<KeyPress>", self._chapter_keypress)
+        self.root.bind_class(chapter_tag, "<<Paste>>", self._chapter_paste)
         voice = ttk.Combobox(
             self.setup_body,
             textvariable=self.voice_var,
@@ -496,6 +502,49 @@ class AudioDashboard:
     def _select_chapter(self, _event=None):
         self.chapter_input.selection_range(0, "end")
         self.chapter_input.icursor("end")
+        return "break"
+
+    def _chapter_keypress(self, event):
+        """Accept digits before an IME can turn them into a preedit candidate."""
+        if event.state & 0x4:  # Ctrl shortcuts remain handled by Entry bindings.
+            return None
+        if event.char and event.char in "0123456789":
+            try:
+                selection_start = self.chapter_input.index("sel.first")
+                selection_end = self.chapter_input.index("sel.last")
+            except tk.TclError:
+                selection_start = selection_end = self.chapter_input.index("insert")
+            if selection_end > selection_start:
+                self.chapter_input.delete(selection_start, selection_end)
+            self.chapter_input.insert(selection_start, event.char)
+            self.chapter_input.icursor(selection_start + 1)
+            return "break"
+        if event.keysym in {
+            "BackSpace", "Delete", "Left", "Right", "Home", "End",
+            "Tab", "Return",
+        }:
+            return None
+        if event.char and event.char.isspace():
+            return "break"
+        return None
+
+    def _chapter_paste(self, _event=None):
+        try:
+            pasted = self.root.clipboard_get()
+        except tk.TclError:
+            return "break"
+        digits = "".join(char for char in str(pasted) if char.isdigit())
+        if not digits:
+            return "break"
+        try:
+            selection_start = self.chapter_input.index("sel.first")
+            selection_end = self.chapter_input.index("sel.last")
+        except tk.TclError:
+            selection_start = selection_end = self.chapter_input.index("insert")
+        if selection_end > selection_start:
+            self.chapter_input.delete(selection_start, selection_end)
+        self.chapter_input.insert(selection_start, digits)
+        self.chapter_input.icursor(selection_start + len(digits))
         return "break"
 
     @staticmethod

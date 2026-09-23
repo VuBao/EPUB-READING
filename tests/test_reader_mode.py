@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import epub2audio
@@ -138,6 +139,27 @@ class ReaderModeUITests(unittest.TestCase):
                 root.withdraw()
                 dashboard = gui.AudioDashboard(root)
                 root.update_idletasks()
+
+                dashboard.chapter_input.delete(0, "end")
+                dashboard.chapter_input.icursor(0)
+                for digit in "480":
+                    dashboard._chapter_keypress(
+                        SimpleNamespace(char=digit, state=0, keysym=digit)
+                    )
+                self.assertEqual(dashboard.chapter_var.get(), "480")
+                root.geometry("900x780+3000+3000")
+                root.deiconify()
+                root.update()
+                dashboard.chapter_input.delete(0, "end")
+                dashboard.chapter_input.focus_force()
+                for digit in "480":
+                    dashboard.chapter_input.event_generate(f"<KeyPress-{digit}>")
+                    root.update()
+                self.assertEqual(dashboard.chapter_var.get(), "480")
+                root.withdraw()
+                with mock.patch.object(root, "clipboard_get", return_value=" 512\n"):
+                    dashboard._chapter_paste()
+                self.assertEqual(dashboard.chapter_var.get(), "480512")
 
                 dashboard.toggle_setup()
                 self.assertTrue(dashboard.setup_collapsed)
