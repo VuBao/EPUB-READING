@@ -1,0 +1,22 @@
+# Runtime and personal data
+*.epub
+audio/
+.audio_state.json
+.audio_states/
+.audio_gui.json
+
+# Python environments and caches
+.venv/
+bin/
+include/
+lib/
+lib64
+pyvenv.cfg
+__pycache__/
+*.py[cod]
+
+# Editor and OS files
+.idea/
+.vscode/
+*.log
+.DS_Store
