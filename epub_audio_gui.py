@@ -123,6 +123,9 @@ class AudioDashboard:
         style.map("Accent.TButton", background=[("active", "#46d5c8")])
         style.configure("Control.TButton", font=("Sans", 10), padding=(10, 8))
         style.configure("Compact.TButton", font=("Sans", 9), padding=(7, 4))
+        style.configure(
+            "ReaderPlay.TButton", font=("Sans", 17, "bold"), padding=(7, 3)
+        )
         style.configure("TEntry", padding=7)
         style.configure("TCombobox", padding=6)
 
@@ -324,6 +327,15 @@ class AudioDashboard:
         self.reader_text.configure(yscrollcommand=reader_scroll.set)
         self.reader_text.grid(row=0, column=0, sticky="nsew")
         reader_scroll.grid(row=0, column=1, sticky="ns")
+        self.reader_play_button = ttk.Button(
+            self.reader_body,
+            text="⏯",
+            width=3,
+            command=self.toggle_reader_playback,
+            style="ReaderPlay.TButton",
+            takefocus=True,
+        )
+        self.reader_play_button.place(relx=1.0, x=-22, y=8, anchor="ne")
         self._set_reader_content("")
 
         self.log_card = ttk.Frame(self.outer, style="Card.TFrame", padding=12)
@@ -432,6 +444,9 @@ class AudioDashboard:
             return None
         self.mpv_command(command)
         return "break"
+
+    def toggle_reader_playback(self):
+        return self.mpv_command(["cycle", "pause"])
 
     def change_reader_font(self, delta):
         self.reader_font_size = min(32, max(10, self.reader_font_size + int(delta)))
@@ -825,6 +840,7 @@ class AudioDashboard:
             pause_response = self._ipc_request(["get_property", "pause"])
             current_position = position_response.get("data") if position_response else None
             paused = pause_response.get("data") if pause_response else False
+            self.reader_play_button.configure(text="▶" if paused else "⏸")
             if current_position is not None and not loaded_state:
                 self.position_var.set(format_time(current_position))
             if not loaded_state:
@@ -833,6 +849,8 @@ class AudioDashboard:
                 self.current_var.set(f"{chapter_hint}  •  {path.stem}")
             if not process_running:
                 self.status_var.set("Đang tạm dừng" if paused else "Đang phát")
+        else:
+            self.reader_play_button.configure(text="⏯")
         self.root.after(1000, self._refresh_state)
 
     def _ipc_request(self, command):

@@ -41,6 +41,7 @@ Sau đó mở **EPUB Audio Reader** từ Desktop hoặc menu Applications.
 Trong chế độ đọc:
 
 - `Space`: Pause/Play.
+- Nút icon `▶` / `⏸` trên khung text: Pause/Play bằng chuột, kể cả khi cửa sổ rất nhỏ.
 - `←`: tua lại 15 giây.
 - `→`: tua tới 30 giây.
 - `Esc` hoặc `F9`: trở lại dashboard đầy đủ.

@@ -117,9 +117,27 @@ class ReaderModeUITests(unittest.TestCase):
                 self.assertFalse(dashboard.reader_chrome_visible)
                 self.assertEqual(dashboard.reader_header.winfo_manager(), "")
                 self.assertEqual(
+                    dashboard.reader_play_button.winfo_manager(), "place"
+                )
+                self.assertEqual(
                     dashboard.reader_text.get("1.0", "end-1c"),
                     "Text đang đọc",
                 )
+
+                with mock.patch.object(
+                    dashboard, "mpv_command", return_value=True
+                ) as mpv_command:
+                    dashboard.reader_play_button.invoke()
+                    mpv_command.assert_called_once_with(["cycle", "pause"])
+
+                responses = {
+                    "path": {"data": "/tmp/chapter_0001/group_0001.mp3"},
+                    "time-pos": {"data": 2.0},
+                    "pause": {"data": True},
+                }
+                dashboard._ipc_request = lambda command: responses.get(command[1])
+                dashboard._refresh_state()
+                self.assertEqual(dashboard.reader_play_button.cget("text"), "▶")
 
                 dashboard._leave_reader_mode()
                 self.assertFalse(dashboard.reader_mode)
