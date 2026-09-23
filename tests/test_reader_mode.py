@@ -170,9 +170,8 @@ class ReaderModeUITests(unittest.TestCase):
                 self.assertTrue(dashboard.reader_mode)
                 self.assertEqual(dashboard.header_card.winfo_manager(), "")
                 self.assertEqual(dashboard.reader_card.winfo_manager(), "pack")
-                self.assertTrue(
-                    dashboard.reader_text.tag_ranges("current_range")
-                )
+                self.assertEqual(dashboard.reader_text.winfo_manager(), "")
+                self.assertEqual(dashboard.reader_play_button.winfo_manager(), "place")
 
                 event = type(
                     "Event",
@@ -184,10 +183,6 @@ class ReaderModeUITests(unittest.TestCase):
                 self.assertEqual(dashboard.reader_header.winfo_manager(), "")
                 self.assertEqual(
                     dashboard.reader_play_button.winfo_manager(), "place"
-                )
-                self.assertEqual(
-                    dashboard.reader_text.get("1.0", "end-1c"),
-                    "Text đang đọc",
                 )
 
                 with mock.patch.object(

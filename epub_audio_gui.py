@@ -277,7 +277,7 @@ class AudioDashboard:
         self.reader_header = ttk.Frame(self.reader_card, style="Card.TFrame")
         self.reader_header.pack(fill="x", pady=(0, 8))
         ttk.Label(
-            self.reader_header, text="NỘI DUNG ĐANG ĐỌC", style="CardTitle.TLabel"
+            self.reader_header, text="ĐIỀU KHIỂN NHANH", style="CardTitle.TLabel"
         ).pack(side="left")
         self.reader_mode_button = ttk.Button(
             self.reader_header,
@@ -332,19 +332,14 @@ class AudioDashboard:
             font=("Sans", self.reader_font_size),
             state="disabled",
         )
-        self.reader_text.tag_configure(
-            "current_range",
-            background="#f59e0b",
-            foreground="#111827",
-            spacing1=4,
-            spacing3=6,
-        )
         reader_scroll = ttk.Scrollbar(
             self.reader_body, orient="vertical", command=self.reader_text.yview
         )
         self.reader_text.configure(yscrollcommand=reader_scroll.set)
-        self.reader_text.grid(row=0, column=0, sticky="nsew")
-        reader_scroll.grid(row=0, column=1, sticky="ns")
+        self.reader_text.grid_remove()
+        reader_scroll.grid_remove()
+        self.reader_body.configure(height=88)
+        self.reader_body.pack_propagate(False)
         self.reader_play_button = ttk.Button(
             self.reader_body,
             text="⏯",
@@ -353,7 +348,7 @@ class AudioDashboard:
             style="ReaderPlay.TButton",
             takefocus=True,
         )
-        self.reader_play_button.place(relx=1.0, x=-22, y=8, anchor="ne")
+        self.reader_play_button.place(relx=0.5, rely=0.5, anchor="center")
         self._set_reader_content("")
 
         self.log_card = ttk.Frame(self.outer, style="Card.TFrame", padding=12)
@@ -408,8 +403,8 @@ class AudioDashboard:
         self.root.minsize(320, 180)
         self.root.geometry(self.reader_geometry)
         self.root.attributes("-topmost", self.reader_always_on_top)
-        self.root.after_idle(self._refresh_reader_layout)
-        self.root.after_idle(self.reader_text.focus_set)
+        self._set_reader_chrome(False)
+        self.root.after_idle(self.reader_play_button.focus_set)
         self._save_settings()
 
     def _leave_reader_mode(self, _event=None):
@@ -432,14 +427,10 @@ class AudioDashboard:
         self._save_settings()
 
     def _on_window_configure(self, event):
-        if event.widget is self.root and self.reader_mode:
-            self._set_reader_chrome(event.width >= 500 and event.height >= 300)
+        return None
 
     def _refresh_reader_layout(self):
-        if self.reader_mode:
-            self._set_reader_chrome(
-                self.root.winfo_width() >= 500 and self.root.winfo_height() >= 300
-            )
+        return None
 
     def _set_reader_chrome(self, visible):
         visible = bool(visible)
@@ -478,22 +469,9 @@ class AudioDashboard:
         self._save_settings()
 
     def _set_reader_content(self, text):
-        content = str(text or "").strip()
-        has_content = bool(content)
-        if not has_content:
-            content = "Nội dung của group đang phát sẽ xuất hiện tại đây."
-        cache_key = (content, has_content)
-        if cache_key == self.last_reader_text:
-            return
-        self.last_reader_text = cache_key
-        self.reader_text.configure(state="normal")
-        self.reader_text.delete("1.0", "end")
-        self.reader_text.insert("1.0", content)
-        self.reader_text.tag_remove("current_range", "1.0", "end")
-        if has_content:
-            self.reader_text.tag_add("current_range", "1.0", "end-1c")
-        self.reader_text.configure(state="disabled")
-        self.reader_text.yview_moveto(0)
+        # Text synchronization remains persisted for resume/debugging, but is
+        # intentionally not rendered in the minimal reader-mode window.
+        return None
 
     def _load_icon(self):
         if not ICON.exists():
